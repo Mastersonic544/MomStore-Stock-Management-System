@@ -45,6 +45,16 @@ export async function fetchProducts() {
     .sort((a, b) => a.name.localeCompare(b.name))
 }
 
+// The "central" catalogue = the shared top-level products collection, read
+// explicitly regardless of the active workspace. Used by private-workspace
+// accounts to pull the master catalogue into their own space (see sync-central).
+export async function fetchCentralProducts() {
+  const snap = await getDocs(collection(db, 'products'))
+  return snap.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+}
+
 export async function createProduct(data) {
   const ref = await addDoc(productsCol(), cleanProduct(data))
   return ref.id

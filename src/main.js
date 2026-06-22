@@ -27,6 +27,7 @@ function workspaceFor(user) {
 
 const state = {
   user: null,
+  workspace: 'shared',    // 'shared' (legacy) or 'own' (private per-user space)
   products: [],
   sales: [],
   cart: loadCart(),       // [{ productId, name, sku, price, qty }]
@@ -57,7 +58,12 @@ if (!isConfigured) {
     if (user) {
       // Pick the data workspace BEFORE loading anything: shared for legacy
       // accounts, a private blank space for new ones.
-      db.setWorkspace(workspaceFor(user))
+      const ws = workspaceFor(user)
+      state.workspace = ws.scope
+      db.setWorkspace(ws)
+      // Private-workspace accounts can pull the master catalogue in one click;
+      // legacy/shared accounts already are the central catalogue, so hide it.
+      el('sync-central-btn').style.display = ws.scope === 'own' ? 'inline-flex' : 'none'
       el('login').style.display = 'none'
       el('app').style.display = 'flex'
       el('user-email').textContent = user.email || ''
@@ -325,6 +331,21 @@ async function deleteProduct(id) {
   refresh()
 }
 
+// ===== Sync with central catalogue =====
+// Copies the shared/central catalogue into this account's private workspace,
+// upserting by name so re-syncing updates existing rows and adds new ones
+// (instead of creating duplicates). Lets a fresh account skip manual entry.
+async function syncCentral() {
+  await withBusy(async () => {
+    const central = await db.fetchCentralProducts()
+    if (!central.length) { toast('Central database has no products to sync.'); return }
+    const { added, updated } = await db.bulkUpsertProducts(central, state.products)
+    state.products = await db.fetchProducts()
+    toast(`Synced from central: ${added} added, ${updated} updated.`)
+  })
+  refresh()
+}
+
 // ===== Cart ops =====
 function cartAdd(id) {
   const p = state.products.find(x => x.id === id)
@@ -495,6 +516,7 @@ const actions = {
   'close-modal': () => closeModals(),
   'set-cat': (_id, t) => { state.activeCategory = t.dataset.cat; renderProducts() },
   'shop-cat': (_id, t) => { state.shopCategory = t.dataset.cat; renderShop() },
+  'sync-central': () => syncCentral(),
   'import-csv': () => el('csv-input').click(),
   'export-csv': () => exportCSV(),
   seed: () => withBusy(async () => { await db.seedProducts(); state.products = await db.fetchProducts(); refresh() }),
