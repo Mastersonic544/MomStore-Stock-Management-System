@@ -9,6 +9,22 @@ import { downloadInvoice } from './invoice.js'
 const el = (id) => document.getElementById(id)
 const CART_KEY = 'nour.cart'
 
+// Accounts created before this cutoff are "legacy" and keep using the shared
+// top-level products/sales collections (unchanged). Accounts created at/after it
+// get a private, initially-blank workspace under users/{uid}/. Set
+// VITE_WORKSPACE_CUTOFF to the moment you deploy this change; the default is the
+// ship date. If an account's creation time can't be read, we fall back to the
+// shared workspace so an existing user is never cut off from their data.
+const WORKSPACE_CUTOFF = import.meta.env.VITE_WORKSPACE_CUTOFF || '2026-06-22T00:00:00Z'
+
+function workspaceFor(user) {
+  const created = Date.parse(user?.metadata?.creationTime || '')
+  const cutoff = Date.parse(WORKSPACE_CUTOFF)
+  if (!Number.isFinite(created) || !Number.isFinite(cutoff) || created < cutoff)
+    return { scope: 'shared' }
+  return { scope: 'own', uid: user.uid }
+}
+
 const state = {
   user: null,
   products: [],
@@ -39,6 +55,9 @@ if (!isConfigured) {
   watchAuth(async (user) => {
     state.user = user
     if (user) {
+      // Pick the data workspace BEFORE loading anything: shared for legacy
+      // accounts, a private blank space for new ones.
+      db.setWorkspace(workspaceFor(user))
       el('login').style.display = 'none'
       el('app').style.display = 'flex'
       el('user-email').textContent = user.email || ''
@@ -53,11 +72,8 @@ if (!isConfigured) {
 async function loadData() {
   try {
     state.products = await db.fetchProducts()
-    // Migrate the static starter catalogue into Firestore on first run.
-    if (state.products.length === 0) {
-      await db.seedProducts()
-      state.products = await db.fetchProducts()
-    }
+    // No auto-seed: a new workspace starts blank. The "Seed catalogue" button in
+    // the empty state can load the starter catalogue on demand if wanted.
     state.sales = await db.fetchSales()
   } catch (e) {
     console.error('Load failed', e)

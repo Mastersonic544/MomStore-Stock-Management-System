@@ -10,8 +10,19 @@ import { SEED } from './seed-data.js'
 
 export { SEED }
 
-const productsCol = () => collection(db, 'products')
-const salesCol = () => collection(db, 'sales')
+// Active workspace base path. Empty array => the shared top-level collections
+// (legacy accounts, unchanged). ['users', uid] => that user's private workspace
+// (new accounts get a blank canvas). main.js calls setWorkspace() right after
+// auth resolves, before any data is loaded. Defaults to shared so a misconfigured
+// boot can never accidentally cut an existing user off from their data.
+let basePath = []
+export function setWorkspace({ scope, uid } = {}) {
+  basePath = scope === 'own' && uid ? ['users', uid] : []
+}
+
+const productsCol = () => collection(db, ...basePath, 'products')
+const salesCol = () => collection(db, ...basePath, 'sales')
+const productDoc = (id) => doc(db, ...basePath, 'products', id)
 
 // Keep only known product fields, coerce numerics. Prevents undefined/NaN writes.
 export function cleanProduct(p) {
@@ -40,11 +51,11 @@ export async function createProduct(data) {
 }
 
 export async function updateProduct(id, data) {
-  await updateDoc(doc(db, 'products', id), cleanProduct(data))
+  await updateDoc(productDoc(id), cleanProduct(data))
 }
 
 export async function deleteProduct(id) {
-  await deleteDoc(doc(db, 'products', id))
+  await deleteDoc(productDoc(id))
 }
 
 // Bulk upsert used by CSV import. Matches existing products by name (case-insensitive).
@@ -55,7 +66,7 @@ export async function bulkUpsertProducts(rows, existing) {
   for (const row of rows) {
     const match = byName.get((row.name || '').toLowerCase())
     if (match) {
-      batch.update(doc(db, 'products', match.id), cleanProduct({ ...match, ...row }))
+      batch.update(productDoc(match.id), cleanProduct({ ...match, ...row }))
       updated++
     } else {
       batch.set(doc(productsCol()), cleanProduct(row))
@@ -82,7 +93,7 @@ export async function checkout(cartItems, meta) {
     const reads = []
     // All reads must happen before any write inside a transaction.
     for (const item of cartItems) {
-      const pRef = doc(db, 'products', item.productId)
+      const pRef = productDoc(item.productId)
       const snap = await tx.get(pRef)
       if (!snap.exists()) throw new Error(`"${item.name || 'A product'}" no longer exists.`)
       const cur = snap.data()
